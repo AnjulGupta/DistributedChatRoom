@@ -20,7 +20,10 @@ public class Process {
 	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
 	private static boolean fifoOrdering = false;
 	private static boolean causalOrdering = false;
-	private static ArrayList<Message> holdBackQueue = new ArrayList<Message>();
+	private static boolean totalOrdering = false;
+//	private static ArrayList<ArrayList<Message>> holdBackQueue = new ArrayList<ArrayList<Message>>();
+	private static HashMap<Integer, ArrayList<Message>> holdBackQueue = new HashMap<Integer, ArrayList<Message>>();
+	private static final Object queueLock = new Object();
 	
 	// Do I even need a constructor...?
 	public Process(int port) {
@@ -75,6 +78,8 @@ public class Process {
 		String[] info = input.split(" ");
 		MetaData data = new MetaData(info, null, null, false);
 		list.put(id, data);
+		holdBackQueue.put(id-1, new ArrayList<Message>());
+		System.out.println("Adding new arraylist at pos " + (id-1));
 		v_timestamps.add(id-1, 0);
 	}
 	
@@ -128,7 +133,7 @@ public class Process {
 //		System.out.println("Starting client " + id + " at " + serverName + " on port " + port);
         (new Thread() {
             @Override
-            public synchronized void run() {
+            public void run() {
             	readAndSendMessages(id);
 //    			System.err.println("Closing client");
             }
@@ -143,38 +148,36 @@ public class Process {
     	try {
     		BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in));
         	String input;
-        	boolean exit = false;
-			while (!exit && (input = stdIn.readLine()) != null) {
-				/*
+//        	boolean exit = false;
+			while ((input = stdIn.readLine()) != null) {
+//				/*
 				final String message = input;
 				final int clientId = id;
 		        (new Thread() {
 		            @Override
-		            public synchronized void run() {
+		            public void run() {
 						if (checkUnicastInput(message)) {
 							int destination = Integer.parseInt(message.substring(5, 6));
-							message = message.substring(7);
-							v_timestamps.set(id-1, v_timestamps.get(clientId-1)+1);
-							sendMessage(message, destination, clientId);
+							String msg = message.substring(7);
+							int time = v_timestamps.get(clientId-1)+1;
+							v_timestamps.set(clientId-1, time);
+							sendMessage(msg, destination, clientId, time);
 						}
 						else if (checkMulticastInput(message)) {
-							v_timestamps.set(clientId-1, v_timestamps.get(clientId-1)+1);
-							message = message.substring(6);
-							System.out.println("Incremented timestamp of " + clientId + " to " + v_timestamps.get(clientId-1));
-							multicast(message, clientId);
+							String msg = message.substring(6);
+							multicast(msg, clientId);
 						}
 						else if (isExitCommand(message)) {
-							v_timestamps.set(clientId-1, v_timestamps.get(clientId-1)+1);
 							multicast(message, clientId);
-							exit = true;
+//							exit = true;
 						}
 						else if (!message.isEmpty()) {
 							System.err.println("send <#> <message>");
 						}
 		            }
 		        }).start();
-				*/
-				
+//				*/
+				/*
 				if (checkUnicastInput(input)) {
 					int destination = Integer.parseInt(input.substring(5, 6));
 					input = input.substring(7);
@@ -187,14 +190,13 @@ public class Process {
 					multicast(input, id);
 				}
 				else if (isExitCommand(input)) {
-					v_timestamps.set(id-1, v_timestamps.get(id-1)+1);
 					multicast(input, id);
 					exit = true;
 				}
 				else if (!input.isEmpty()) {
 					System.err.println("send <#> <message>");
 				}
-				
+				*/
 			}
 			System.err.println("Closing client " + id);
 			stdIn.close();
@@ -314,7 +316,8 @@ public class Process {
 	                    		receiveMessages(s);
 	                    	}
 	                    }).start();
-
+	                    
+//	                    receiveMessages(s);
                     }
                     System.err.println("Server is closing.");
                 } catch (IOException e) {
@@ -334,6 +337,7 @@ public class Process {
 			BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
 	        String input;
 			while (!closed && (input = in.readLine()) != null) {
+				
 				final String message = input;
                 // Create a new thread for each message
                 (new Thread() {
@@ -342,6 +346,8 @@ public class Process {
                 		unicastReceive(message, s);
                 	}
                 }).start();
+                
+				// unicastReceive(input, s);
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -357,41 +363,105 @@ public class Process {
 	public static void unicastReceive(String input, Socket s) {
 		int source = Integer.parseInt(input.substring(0, 1));
 		int id = Integer.parseInt(input.substring(2, 3));
-//		System.out.println("input is : " + input);
+		
+		list.get(source).setSocket(s);
 		int time = readTimeFromInput(input);
 		String message = input.substring(input.indexOf(":") + 2);
 		
-		boolean deliver = delayMessage(id, time, input);
+		boolean deliver = delayMessage(source, time, input);
+		System.out.println("Recieved message: " + message);
 		
-		if (deliver)
+		if (deliver) {
 			deliverMessage(input, message, s, id, source);
+		}
+			
 	}
 	
-	public static void deliverMessage(String input, String message, Socket s, int id, int source) {
-		System.out.println("Received \"" + message + "\" from process " + source + ", system time is " + getTime());
+	/**
+	 * Delays a message: adds in network delay and places elements in holdback queue 
+	 * @param time
+	 */
+	public static boolean delayMessage(int source, int time, String input) {
+		// Sleep for a random time to simulate network delay
+		sleepRandomTime();
 		
-		if (list.get(id).isOpen()) {
-			if (isExitCommand(message)) {
-				try {
-					s.close();
-					list.get(source).setSocket(null);
-					closed = socketsOpen();
-					System.out.println("Process " + source + " is now closed (closed = " + closed + ").");
-				} catch (IOException e) {
-					e.printStackTrace();
+		// If implementing FIFO ordering, check the sequence vector
+		// If implementing causal ordering, implement both FIFO and total ordering
+		// If implement total ordering, check the total ordering vector
+		if (causalOrdering) {
+			
+		}
+		else if (totalOrdering) {
+			
+		}
+		else {
+			return delayFifo(source, time, input);
+		}
+		return false;
+	}
+	
+	private static boolean delayFifo(int source, int time, String input) {
+		int v_time = v_timestamps.get(source - 1);
+		
+		// If the time has already passed, ignore the message
+		if (time < v_time + 1) {
+			System.err.println("Message arriving too late, ignore!");
+			return false;
+		}
+		
+		// If the vector_time has come, deliver the message
+		if (time == v_time + 1) {
+			v_timestamps.set(source - 1, time);
+			return true;
+		}
+		
+		Message msg = new Message(time, input, source);
+		synchronized (queueLock) {
+			holdBackQueue.get(source-1).add(msg);
+		}
+		return false;
+	}
+	
+	/**
+	 * 
+	 * @param id
+	 */
+	public static void checkHoldBackQueue(int source) {
+		boolean deliver = false;
+		Message msg = null;
+		synchronized (queueLock) {
+//			System.out.println("Checking hold back queue for processor " + (source));
+			ArrayList<Message> holdList = holdBackQueue.get(source-1);
+			if (holdList.size() == 0) {
+//				System.out.println("Nothing in hold back queue");
+				return;
+			}
+			
+			for (int i = 0; i < holdList.size(); i++) {
+				msg = holdList.get(i);
+				int msgSource = msg.getSource();
+				int v_time = v_timestamps.get(msgSource - 1);
+				
+	//			System.out.println("Msg timestamp = " + msg.getTimestamp() + ", v_time = " + v_time);
+				
+				if (msg.getTimestamp() == v_time + 1) {
+					deliver = true;
+					holdList.remove(i);
+					v_timestamps.set(msgSource-1, v_time+1);
+					break;
 				}
 			}
 		}
-		else {
-			getSocketInfo(input.substring(2), s);
+		if (deliver) {
+			int msgSource = msg.getSource();
+			MetaData data = list.get(msgSource);
+			String input = msg.getMessage();
+			String message = input.substring(input.indexOf(":") + 2);
+			System.out.println("About to deliver \"" + message + "\" from queue " + msgSource);
+			deliverMessage(input, message, data.getSocket(), source, msgSource);
 		}
 		
-		// Check if this updates any messages on the queue
-		checkHoldBackQueue(id);
-	}
-	
-	public static synchronized void checkHoldBackQueue(int id) {
-//		System.out.println("Checking hold back queue!");
+		/*
 		for (int i = 0; i < holdBackQueue.size(); i++) {
 			
 			Message msg = holdBackQueue.get(i);
@@ -408,14 +478,38 @@ public class Process {
 				deliverMessage(input, message, data.getSocket(), id, msgSource-1);
 			}
 		}
+		*/
 	}
 
+	public static void deliverMessage(String input, String message, Socket s, int id, int source) {
+		System.out.println("Delivered \"" + message + "\" from process " + source + ", system time is " + getTime());
+		
+		if (list.get(source).isOpen()) {
+			if (isExitCommand(message)) {
+				try {
+					s.close();
+					list.get(source).setSocket(null);
+					closed = socketsOpen();
+					System.out.println("Process " + source + " is now closed (closed = " + closed + ").");
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		else {
+			getSocketInfo(input.substring(2), s);
+		}
+		
+		// Check if this updates any messages on the queue
+		checkHoldBackQueue(source);
+	}
+	
 	/**
 	 * Returns the time from a formatted string input
 	 * @param input: "<source> <destination> <IP> <port> <time>: <message>"
 	 * @return <time>, -1 if not found
 	 */
-	public static synchronized int readTimeFromInput(String input) {
+	public static int readTimeFromInput(String input) {
 		int timeEnd = input.indexOf(':') - 1;
 		int timeStart = timeEnd;
 		while (timeStart > 0 && !Character.isWhitespace(input.charAt(timeStart-1))) {
@@ -429,44 +523,6 @@ public class Process {
 		return -1;
 	}
 	
-	/**
-	 * Delays a message: adds in network delay and places elements in holdback queue 
-	 * @param time
-	 */
-	public static synchronized boolean delayMessage(int source, int time, String input) {
-		// Sleep for a random time to simulate network delay
-		sleepRandomTime();
-		
-		// If implementing FIFO ordering, check the sequence vector 
-		if (fifoOrdering) {
-			int v_time = v_timestamps.get(source - 1);
-			
-			System.out.println("Current time is " + v_time + ", msg time is " + time);
-			
-			// If the time has already passed, ignore the message
-			if (time < v_time + 1) {
-				System.err.println("Message arriving too late!");
-				return false;
-			}
-			
-			// If the vector_time has come, deliver the message
-			if (time == v_time + 1) {
-				v_timestamps.set(source - 1, time);
-				return true;
-			}
-			
-			Message msg = new Message(time, input, source);
-			System.err.println("Adding \"" + input + "\" to holdBackQueue");
-			holdBackQueue.add(msg);
-		}
-		else if (causalOrdering) {
-			
-		}
-		return false;
-	
-
-	}
-
 	/**
 	 * Sleeps the current thread for a random amount of time bounded my min and max delay
 	 */
@@ -490,7 +546,7 @@ public class Process {
 		return input.equals("exit");
 	}
 
-	public static synchronized boolean socketsOpen() {
+	public static boolean socketsOpen() {
 		for (MetaData data : list.values()) {
 			if (data.getSocket() != null)
 				return true;
@@ -543,6 +599,10 @@ public class Process {
 			}
 			else if (order.equals("causal")) {
 				causalOrdering = true;
+				return;
+			}
+			else if (order.equals("total")) {
+				totalOrdering = true;
 				return;
 			}
 		}
