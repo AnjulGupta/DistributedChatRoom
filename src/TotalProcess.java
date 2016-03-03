@@ -10,7 +10,7 @@ import java.util.*;
  * @author Samir Chaudhry
  *
  */
-public class CausalProcess {
+public class TotalProcess {
 
 	// Min and max delays for the delay
 	private static int minDelay;
@@ -18,11 +18,21 @@ public class CausalProcess {
 	// A mapping of processId's to their corresponding metadata information
 	private static HashMap<Integer, MetaData> list = new HashMap<Integer, MetaData>();
 	
-	// A vector timestamp for the current process
-	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
+	// sequenceNumber and its lock
+	private static int sequenceNumber = 0;
+	private static final Object seqNumLock = new Object();
 	
-	// holdBackQueue that holds the elements to be buffered and a lock for the queue
-	private static HashMap<Integer, ArrayList<CausalMessage>> holdBackQueue = new HashMap<Integer, ArrayList<CausalMessage>>();
+	// messagesDelivered for a process and its lock
+	private static int mesgDelivered = 0;
+	private static final Object mesgDeliveredLock = new Object();
+	
+	// Provides uniqueIds to every message
+	private static int uniqueID = 0;
+	private static final Object idLock = new Object();
+	
+//	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
+	
+	private static HashMap<Integer, ArrayList<Message>> holdBackQueue = new HashMap<Integer, ArrayList<Message>>();
 	private static final Object queueLock = new Object();
 	
 	/**
@@ -69,11 +79,11 @@ public class CausalProcess {
 	 * @param input
 	 */
 	public static void addProcessToList(String input, int id) {
+//		System.out.println("Adding process " + id + " to list: " + input);
 		String[] info = input.split(" ");
 		MetaData data = new MetaData(info, null, null, false);
 		list.put(id, data);
-		holdBackQueue.put(id, new ArrayList<CausalMessage>());
-		v_timestamps.add(id-1, 0);
+		holdBackQueue.put(id, new ArrayList<Message>());
 	}
 	
 	/**
@@ -150,15 +160,23 @@ public class CausalProcess {
 		            public void run() {
 						if (checkUnicastInput(message)) {
 							// send 2 Hey
+							/*
 							int destination = Integer.parseInt(message.substring(5, 6));
-							ArrayList<Integer> time = v_timestamps;
-							CausalMessage m = new CausalMessage(message.substring(7), time, clientId, list.get(destination));
+							TotalMessage m = new TotalMessage(message.substring(7), false, clientId, list.get(destination), -1, uniqueID);
 							sendMessage(m);
+							*/
 						}
 						else if (checkMulticastInput(message)) {
 							// msend Hey
 							String msg = message.substring(6);
-							multicast(msg, clientId);
+							// If multicasting, send message to the sequencer (process 1)
+							TotalMessage m = new TotalMessage(message.substring(7), clientId, list.get(1), incrementUniqueID());  
+							if (clientId != 1) {
+								TotalMessage m = new TotalMessage(message.substring(7), clientId, list.get(destination), -1, incrementUniqueID());
+								sendMessage(m);
+							}
+							int uniqueId = incrementUniqueID();
+							multicast(msg, clientId, false, uniqueId);
 						}
 						else if (!message.isEmpty()) {
 							System.err.println("send <#> <message>");
@@ -175,29 +193,35 @@ public class CausalProcess {
 		}
 	}
 	
-	/**
-	 * Increments the vector timestamp of process ID by one
-	 * @param id
-	 * @return
-	 */
-	private static ArrayList<Integer> incrementTimestamp(int id) {
-		synchronized (queueLock) {
-			int time = v_timestamps.get(id-1)+1;
-			v_timestamps.set(id-1, time);
-			System.out.println("Printing new timestamp");
-			printVectorTimes(v_timestamps);
-			
-			return v_timestamps;
+	private static int incrementUniqueID() {
+		synchronized (idLock) {
+			return uniqueID++;
 		}
 	}
 	
-	private static void printVectorTimes(ArrayList<Integer> arr) {
-		synchronized (queueLock) {
-			for (int i = 0; i < arr.size(); i++) {
-				System.out.print(arr.get(i));
+	/**
+	 * Increments the sequenceNumber is a seqMesg
+	 * Else increments mesgDelivered
+	 * @param seqMesg
+	 * @return
+	 */
+	private static int incrementTimestamp(boolean seqMesg) {
+		if (seqMesg) {
+			synchronized (seqNumLock) {
+				sequenceNumber++;
 			}
-			System.out.println("");
+			return sequenceNumber;
 		}
+		else {
+			synchronized (mesgDeliveredLock) {
+				mesgDelivered++;
+			}
+			return mesgDelivered;
+		}
+	}
+	
+	private static void printTimes() {
+		System.out.println("Sequencer = " + sequenceNumber + "; mesgDelivered = " + mesgDelivered);
 	}
 	
 	/**
@@ -205,7 +229,7 @@ public class CausalProcess {
 	 * Writes the seralized object to the writer
 	 * @param m
 	 */
-	public static void sendMessage(CausalMessage m) {
+	public static void sendMessage(TotalMessage m) {
 		try {
 			String[] destinationInfo = m.getMetaData().getProcessInfo();
 			int destination = Integer.parseInt(destinationInfo[0]);
@@ -241,12 +265,12 @@ public class CausalProcess {
 	 * i is the id of each process ID
 	 * @param message
 	 */
-	public static void multicast(String message, int source) {
-		ArrayList<Integer> times = incrementTimestamp(source);
+	public static void multicast(String message, int source, boolean seqMesg, int uniqueIdentifier) {
+		int time = incrementTimestamp(seqMesg);
 		for (int i = 0; i < list.size(); i++) {
 			MetaData data = list.get(i+1);
 			if (data != null && source != (i+1)) {
-				CausalMessage m = new CausalMessage(message, times, source, data);
+				TotalMessage m = new TotalMessage(message, seqMesg, source, data, time, uniqueIdentifier);
 				sendMessage(m);
 			}
 		}
@@ -284,7 +308,7 @@ public class CausalProcess {
 
 	/**
 	 * Starts the server in a new thread
-	 * Loop until every process has been connected to ---- removed for now
+	 * Loops until every process has been connected to
 	 * @param serverName
 	 * @param port
 	 */
@@ -316,15 +340,16 @@ public class CausalProcess {
 	}
 	
 	/**
-	 * When a client connects, create an input stream and keep reading messages in
+	 * Once a client connects to the server, keep reading messages from the client
+	 * If first time connecting, gets the socket's info into the MetaData
 	 * @param s
 	 */
 	public static void receiveMessages(final Socket s) {
 		try {
 			ObjectInputStream in = new ObjectInputStream(s.getInputStream());
-	        CausalMessage msg;
-			while (true && (msg = (CausalMessage)in.readObject()) != null) {
-				final CausalMessage m = msg;
+	        Message msg;
+			while ((msg = (Message)in.readObject()) != null) {
+				final Message m = msg;
                 // Create a new thread for each message
                 (new Thread() {
                 	@Override
@@ -341,11 +366,11 @@ public class CausalProcess {
 	}
 
 	/**
-	 * Receives the message, adds delay if necessary, and delivers it if ready
+	 * Prints out the message, implementing a delay if necessary
 	 * @param source
 	 * @param message
 	 */
-	public static void unicastReceive(CausalMessage m, Socket s) {
+	public static void unicastReceive(TotalMessage m, Socket s) {
 		MetaData data = m.getMetaData();
 		int source = m.getSource();
 		int id = Integer.parseInt(data.getProcessInfo()[0]);
@@ -353,143 +378,109 @@ public class CausalProcess {
 		if (list.get(source).getSocket() == null)
 			list.get(source).setSocket(s);
 		
-		if (delayMessage(m, source)) {
+		// If a sequencer message, check if corresponding message should be delivered
+		if (m.isSeqMesg()) {
+			checkHoldbackQueue(m);
+		}
+		// Else if sequencer is receiving it, multicast sequencer message
+		else if (id == 1) {
+			
+		}
+		
+		if (delayMessage(m, id)) {
 			deliverMessage(m, source, s);
 		}	
 	}
 	
+	public static void sequenceCheck() {
+		
+	}
+	
 	/**
-	 * Delays a message: adds in network delay
-	 * Calls checkTimeStamps to determine if should be delivered 
+	 * Delays a message: adds in network delay and places elements in holdback queue 
 	 * @param time
 	 */
-	public static boolean delayMessage(CausalMessage m, int source) {
+	public static boolean delayMessage(Message m, int id) {
 		// Sleep for a random time to simulate network delay
 		sleepRandomTime();
 		
-		// FOR TESTING CAUSAL
-		/* 
-		try {
-			int destination = Integer.parseInt(m.getMetaData().getProcessInfo()[0]);
-			if (source == 1 && destination == 3) {
-				System.out.println("Sleeping for 10");
-				Thread.sleep(10000);
-			}
-			else if (source == 1 && destination == 2) {
-//				System.out.println("Sleeping for 5");
-//				Thread.sleep(5000);
-			}
-			else if (source == 2 && destination == 3) {
-				System.out.println("Sleeping for 5");
-				Thread.sleep(5000);
-			}
-		} catch (InterruptedException e) {
-			
-		}
-		*/
-		
 		System.out.println("Recieved message: " + m.getMessage());
 		
-		return checkTimeStamps(m, source);
-	}
-	
-	/**
-	 * Compares the message M with the process vector time to determine if it should be delivered
-	 * If sent from process source, check if V[source] + 1 = mesg[source]
-	 * If true, determine if all elements in V are ≥ to elements in mesg
-	 * Return true if this holds, false otherwise 
-	 * @param m
-	 * @param source
-	 * @return True if should be delivered, false if placed in queue
-	 */
-	public static boolean checkTimeStamps(CausalMessage m, int source) {
-		ArrayList<Integer> mesgTimes = m.getTimestamp();
+//		System.out.println("m-ID = " + m.getSource() + ", source = " + id);
+		int v_time = v_timestamps.get(m.getSource() - 1);
+		int mesgTime = m.getTimestamp();
 		
-		synchronized (queueLock) {
-			int v_time = v_timestamps.get(source - 1);
-			int mesgTime = mesgTimes.get(source - 1);
+//		System.out.println("v_time = " + v_time + "; mesgTime = " + mesgTime);
+//		printVectorTimes(v_timestamps);
 			
-			printVectorTimes(v_timestamps);
-			printVectorTimes(mesgTimes);
-			
-			// If Vj[i] = Vi[i] + 1
-			int greater = 0;
-			int less = 0;
-			if (mesgTime == (v_time + 1)) {
-//				System.out.println("Checking rest of vector");
-				for (int i = 0; i < mesgTimes.size(); i++) {
-					if (i != source - 1) { 
-						if (v_timestamps.get(i) < mesgTimes.get(i))
-							greater++;
-						else if (v_timestamps.get(i) > mesgTimes.get(i))
-							less++;
-					}
-				}
-				if (greater >= 1 && less >= 1) {
-					System.err.println("Concurrent");
-					return true;
-				}
-				else if (greater == 0) {
-					return true;
-				}
-			}
-			
-//			System.out.println("Adding to queue at " + source);
-			
-			holdBackQueue.get(source).add(m);
-			return false;
+		// Implemented for unicast
+		if (mesgTime == v_time) {
+			return true;
 		}
+		
+		// If the vector_time has come, deliver the message
+		if (mesgTime == v_time + 1) {
+			return true;
+		}
+		// Else add it to the queue
+		else if (mesgTime > (v_time + 1)){
+			synchronized (queueLock) {
+				System.out.println("Adding " + m.getMessage() + " to queue w/ timestamp " + mesgTime);
+				holdBackQueue.get(m.getSource()).add(m);
+			}
+		}
+		return false;
 	}
 	
 	/**
-	 * Acknowledges delivering of the message, sets its vector timestamp
+	 * Acknowledges delivering of the message
 	 * Gets the socket info if first time receiving info from this process
 	 * Checks the holdback queue to see if any new messages can be delivered
 	 * @param m
 	 * @param source
 	 * @param s
 	 */
-	public static void deliverMessage(CausalMessage m, int source, Socket s) {
+	public static void deliverMessage(TotalMessage m, int source, Socket s) {
 		String message = m.getMessage();
 
-		v_timestamps.set(source - 1, m.getTimestamp().get(source-1));
+		// Increment mesgDelivered
+		incrementTimestamp(false);
 		
 		System.out.println("Delivered \"" + message + "\" from process " + source + ", system time is " + getTime());
 
-		checkHoldbackQueue(source);
+		checkHoldbackQueue(m);
 	}
 	
 	/**
 	 * Scans through the holdback queue to determine whether any messages can be delivered
-	 * Determines if a message can be delivered by checkTimeStamps()
 	 * If so, it delivers them
 	 * @param source
 	 */
-	public static void checkHoldbackQueue(int id) {
-		CausalMessage msg = null;
+	public static void checkHoldbackQueue(TotalMessage m) {
+		int source = m.getSource();
+		int mesgId = m.getId();
+		
+		Message msg = null;
 		boolean deliver = false;
+		
 		synchronized (queueLock) {
-			for (int i = 0; i < holdBackQueue.size(); i++) {
-				ArrayList<CausalMessage> msgs = holdBackQueue.get(i+1);
-				if (msgs != null && msgs.size() > 0) {
-					for (int j = 0; j < msgs.size(); j++) {
-						msg = msgs.get(j);
-						int v_time = v_timestamps.get(msg.getSource() - 1);
-		//				System.out.println("Queue: v_time = " + v_time + "; msgTime = " + msg.getTimestamp());
-						
-						// Deliver this message
-						if (msg.getTimestamp().get(i) == (v_time + 1) && checkTimeStamps(msg, msg.getSource())) {
-							deliver = true;
-							msgs.remove(j);
-							break;
-						}
-					}
+			ArrayList<Message> msgs = holdBackQueue.get(source);
+			if (msgs.size() == 0)
+				return;
+			for (int i = 0; i < msgs.size(); i++) {
+				msg = msgs.get(i);
+//				System.out.println("Queue: v_time = " + v_time + "; msgTime = " + msg.getTimestamp());
+				// Deliver this message
+				if (m.getTime() == mesgDelivered) {
+					deliver = true;
+					msgs.remove(i);
+					break;
 				}
 			}
 		}
 		
 		if (deliver) {
-			deliverMessage(msg, msg.getSource(), msg.getMetaData().getSocket());
+			deliverMessage(msg, source, msg.getMetaData().getSocket());
 		}
 		
 	}
@@ -506,14 +497,24 @@ public class CausalProcess {
 			e.printStackTrace();
 		}		
 	}
+
+	/**
+	 * Determines whether the received message is a valid input
+	 * Invalid input = a string with a colon in it
+	 * @param input
+	 * @return
+	 */
+	public static boolean invalidInput(String input) {
+		int index = input.indexOf(':');
+		return (index != -1 && index >= 0);
+	}
 	
 	/**
 	 * @param args
 	 */
 	public static void main(String[] args) throws IOException {
-		if (args.length == 0) {
+		if (args.length < 1) {
 			System.err.println("./process <id>");
-			return;
 		}
 		
 		// Get the process ID number

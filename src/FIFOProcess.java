@@ -1,5 +1,3 @@
-
-
 import java.net.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
@@ -17,10 +15,11 @@ public class FIFOProcess {
 	private static int maxDelay;
 	// A mapping of processId's to their corresponding metadata information
 	private static HashMap<Integer, MetaData> list = new HashMap<Integer, MetaData>();
-	// Whether 
-	private static boolean closed = false;
+	
+	// A vector timestamp for the current process
 	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
 	
+	// holdBackQueue that holds the elements to be buffered and a lock for the queue
 	private static HashMap<Integer, ArrayList<Message>> holdBackQueue = new HashMap<Integer, ArrayList<Message>>();
 	private static final Object queueLock = new Object();
 	
@@ -292,7 +291,7 @@ public class FIFOProcess {
                     ss = new ServerSocket(port);
                     
                     // Keep looping until every MetaData is open
-                    while (!closed) {
+                    while (true) {
 	                    final Socket s = ss.accept();
 	                    
 	                    // Create a new thread for each connection
@@ -303,7 +302,6 @@ public class FIFOProcess {
 	                    	}
 	                    }).start();
                     }
-                    System.err.println("Server is closing.");
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -320,7 +318,7 @@ public class FIFOProcess {
 		try {
 			ObjectInputStream in = new ObjectInputStream(s.getInputStream());
 	        Message msg;
-			while (!closed && (msg = (Message)in.readObject()) != null) {
+			while ((msg = (Message)in.readObject()) != null) {
 				final Message m = msg;
                 // Create a new thread for each message
                 (new Thread() {
