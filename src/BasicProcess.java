@@ -1,5 +1,3 @@
-
-
 import java.net.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
@@ -17,7 +15,8 @@ public class BasicProcess {
 	private static int maxDelay;
 	// A mapping of processId's to their corresponding metadata information
 	private static HashMap<Integer, MetaData> list = new HashMap<Integer, MetaData>();
-	// Whether 
+
+	// Whether the process has closed yet 
 	private static boolean closed = false;
 	
 	private static HashMap<Integer, ArrayList<Message>> holdBackQueue = new HashMap<Integer, ArrayList<Message>>();
@@ -73,6 +72,7 @@ public class BasicProcess {
 			boolean found = false;
 			int num = 1;
 			while (scanner.hasNext()) {
+				// If the current process, set found to true
 				if (num == id) {
 					input = scanner.nextLine();
 					addProcessToList(input, id);

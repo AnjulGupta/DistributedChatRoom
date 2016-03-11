@@ -1,10 +1,7 @@
-
-
 import java.net.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
-
 
 /**
  * @author Samir Chaudhry
@@ -18,20 +15,10 @@ public class TotalProcess {
 	// A mapping of processId's to their corresponding metadata information
 	private static HashMap<Integer, MetaData> list = new HashMap<Integer, MetaData>();
 	
-	// sequenceNumber and its lock
-	private static int sequenceNumber = 0;
-	private static final Object seqNumLock = new Object();
+	// A vector timestamp for the current process
+	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
 	
-	// messagesDelivered for a process and its lock
-	private static int mesgDelivered = 0;
-	private static final Object mesgDeliveredLock = new Object();
-	
-	// Provides uniqueIds to every message
-	private static int uniqueID = 0;
-	private static final Object idLock = new Object();
-	
-//	private static ArrayList<Integer> v_timestamps = new ArrayList<Integer>();
-	
+	// holdBackQueue that holds the elements to be buffered and a lock for the queue
 	private static HashMap<Integer, ArrayList<Message>> holdBackQueue = new HashMap<Integer, ArrayList<Message>>();
 	private static final Object queueLock = new Object();
 	
@@ -84,6 +71,7 @@ public class TotalProcess {
 		MetaData data = new MetaData(info, null, null, false);
 		list.put(id, data);
 		holdBackQueue.put(id, new ArrayList<Message>());
+		v_timestamps.add(id-1, 0);
 	}
 	
 	/**
@@ -159,27 +147,34 @@ public class TotalProcess {
 		            @Override
 		            public void run() {
 						if (checkUnicastInput(message)) {
-							// send 2 Hey
-							/*
 							int destination = Integer.parseInt(message.substring(5, 6));
-							TotalMessage m = new TotalMessage(message.substring(7), false, clientId, list.get(destination), -1, uniqueID);
-							sendMessage(m);
-							*/
+							int time = v_timestamps.get(clientId-1)+1;
+							System.out.println(time);
+							Message m = new Message(message.substring(7), time, clientId, list.get(destination));
+							sendMessage(m, true);
 						}
 						else if (checkMulticastInput(message)) {
-							// msend Hey
+							// If another process is trying to multicast, send it to the sequencer first
+							// Sequencer will send out its messages in FIFO order
 							String msg = message.substring(6);
-							// If multicasting, send message to the sequencer (process 1)
-							TotalMessage m = new TotalMessage(message.substring(7), clientId, list.get(1), incrementUniqueID());  
 							if (clientId != 1) {
-								TotalMessage m = new TotalMessage(message.substring(7), clientId, list.get(destination), -1, incrementUniqueID());
-								sendMessage(m);
+								int destination = 1; // processor 1 is always sequencer
+								int time = v_timestamps.get(clientId-1)+1;
+								Message m = new Message(msg, time, clientId, list.get(destination));
+								sendMessage(m, false);
+								for (int i = 1; i <= list.size(); i++) {
+									if (i != clientId) {
+										System.out.println("Sent " + m.getMessage() + " to process " + i + ", system time is " + getTime());
+									}
+								}
 							}
-							int uniqueId = incrementUniqueID();
-							multicast(msg, clientId, false, uniqueId);
+							// Otherwise process 1 is trying to multicast
+							else {
+								multicast(msg, clientId);
+							}
 						}
 						else if (!message.isEmpty()) {
-							System.err.println("send <#> <message>");
+							System.err.println("msend <message>");
 						}
 		            }
 		        }).start();
@@ -193,35 +188,24 @@ public class TotalProcess {
 		}
 	}
 	
-	private static int incrementUniqueID() {
-		synchronized (idLock) {
-			return uniqueID++;
-		}
-	}
-	
 	/**
-	 * Increments the sequenceNumber is a seqMesg
-	 * Else increments mesgDelivered
-	 * @param seqMesg
+	 * Increments the vector timestamp of process ID by one
+	 * @param id
 	 * @return
 	 */
-	private static int incrementTimestamp(boolean seqMesg) {
-		if (seqMesg) {
-			synchronized (seqNumLock) {
-				sequenceNumber++;
-			}
-			return sequenceNumber;
-		}
-		else {
-			synchronized (mesgDeliveredLock) {
-				mesgDelivered++;
-			}
-			return mesgDelivered;
-		}
+	private static int incrementTimestamp(int id) {
+		int time = v_timestamps.get(id-1)+1;
+		v_timestamps.set(id-1, time);
+		return time;
 	}
 	
-	private static void printTimes() {
-		System.out.println("Sequencer = " + sequenceNumber + "; mesgDelivered = " + mesgDelivered);
+	private static void printVectorTimes(ArrayList<Integer> arr) {
+		synchronized (queueLock) {
+			for (int i = 0; i < arr.size(); i++) {
+				System.out.print(arr.get(i));
+			}
+			System.out.println("");
+		}
 	}
 	
 	/**
@@ -229,7 +213,7 @@ public class TotalProcess {
 	 * Writes the seralized object to the writer
 	 * @param m
 	 */
-	public static void sendMessage(TotalMessage m) {
+	public static void sendMessage(Message m, boolean print) {
 		try {
 			String[] destinationInfo = m.getMetaData().getProcessInfo();
 			int destination = Integer.parseInt(destinationInfo[0]);
@@ -253,7 +237,9 @@ public class TotalProcess {
 			data.getWriter().writeObject(m);
 			data.getWriter().flush();
 			
-			System.out.println("Sent " + m.getMessage() + " to process " + destination  + ", system time is " + getTime());
+			
+			if (print)
+				System.out.println("Sent " + m.getMessage() + " to process " + destination  + ", system time is " + getTime());
 		} catch (IOException e) {
 			System.err.println("ERROR:");
 			e.printStackTrace();
@@ -265,15 +251,22 @@ public class TotalProcess {
 	 * i is the id of each process ID
 	 * @param message
 	 */
-	public static void multicast(String message, int source, boolean seqMesg, int uniqueIdentifier) {
-		int time = incrementTimestamp(seqMesg);
-		for (int i = 0; i < list.size(); i++) {
+	public static void multicast(String message, int source) {
+		// Only the sequencer calls multicast
+		// Only increment the first process's timestamp
+		int time = incrementTimestamp(1);
+		for (int i = 1; i < list.size(); i++) {
 			MetaData data = list.get(i+1);
-			if (data != null && source != (i+1)) {
-				TotalMessage m = new TotalMessage(message, seqMesg, source, data, time, uniqueIdentifier);
-				sendMessage(m);
+			if (data != null) {
+				Message m = new Message(message, time, source, data);
+				if (source == 1)
+					sendMessage(m, true);
+				else
+					sendMessage(m, false);
 			}
 		}
+		if (source == 1)
+			System.out.println("Delivered \"" + message + "\" from process " + source + ", system time is " + getTime());
 	}
 
 	/**
@@ -370,30 +363,19 @@ public class TotalProcess {
 	 * @param source
 	 * @param message
 	 */
-	public static void unicastReceive(TotalMessage m, Socket s) {
+	public static void unicastReceive(Message m, Socket s) {
 		MetaData data = m.getMetaData();
 		int source = m.getSource();
 		int id = Integer.parseInt(data.getProcessInfo()[0]);
 		
+//		System.out.println("unicastReceive: " + m.getTimestamp());
+		
 		if (list.get(source).getSocket() == null)
 			list.get(source).setSocket(s);
 		
-		// If a sequencer message, check if corresponding message should be delivered
-		if (m.isSeqMesg()) {
-			checkHoldbackQueue(m);
-		}
-		// Else if sequencer is receiving it, multicast sequencer message
-		else if (id == 1) {
-			
-		}
-		
 		if (delayMessage(m, id)) {
-			deliverMessage(m, source, s);
+			deliverMessage(m, source, s, id);
 		}	
-	}
-	
-	public static void sequenceCheck() {
-		
 	}
 	
 	/**
@@ -404,15 +386,20 @@ public class TotalProcess {
 		// Sleep for a random time to simulate network delay
 		sleepRandomTime();
 		
+		// If sequencer just received a message, deliver the message and then multicast
+		if (id == 1) {
+			return true;
+		}
+		
 		System.out.println("Recieved message: " + m.getMessage());
 		
 //		System.out.println("m-ID = " + m.getSource() + ", source = " + id);
-		int v_time = v_timestamps.get(m.getSource() - 1);
+//		printVectorTimes(v_timestamps);
+		int v_time = v_timestamps.get(0);
 		int mesgTime = m.getTimestamp();
 		
-//		System.out.println("v_time = " + v_time + "; mesgTime = " + mesgTime);
-//		printVectorTimes(v_timestamps);
-			
+//		System.out.println("v_time = " + v_time + ", mesgTime = " + mesgTime);
+		
 		// Implemented for unicast
 		if (mesgTime == v_time) {
 			return true;
@@ -425,8 +412,8 @@ public class TotalProcess {
 		// Else add it to the queue
 		else if (mesgTime > (v_time + 1)){
 			synchronized (queueLock) {
-				System.out.println("Adding " + m.getMessage() + " to queue w/ timestamp " + mesgTime);
-				holdBackQueue.get(m.getSource()).add(m);
+//				System.out.println("Adding " + m.getMessage() + " to queue w/ timestamp " + mesgTime);
+				holdBackQueue.get(1).add(m);
 			}
 		}
 		return false;
@@ -440,15 +427,19 @@ public class TotalProcess {
 	 * @param source
 	 * @param s
 	 */
-	public static void deliverMessage(TotalMessage m, int source, Socket s) {
+	public static void deliverMessage(Message m, int source, Socket s, int id) {
 		String message = m.getMessage();
-
-		// Increment mesgDelivered
-		incrementTimestamp(false);
 		
-		System.out.println("Delivered \"" + message + "\" from process " + source + ", system time is " + getTime());
-
-		checkHoldbackQueue(m);
+		if (id != 1) {
+			v_timestamps.set(0, m.getTimestamp());
+		}
+		
+		System.out.println("Delivered \"" + message + "\" from process " + m.getSource() + ", system time is " + getTime());
+		
+		if (id == 1)
+			multicast(m.getMessage(), m.getSource());
+		
+		checkHoldbackQueue(source, id);
 	}
 	
 	/**
@@ -456,22 +447,19 @@ public class TotalProcess {
 	 * If so, it delivers them
 	 * @param source
 	 */
-	public static void checkHoldbackQueue(TotalMessage m) {
-		int source = m.getSource();
-		int mesgId = m.getId();
-		
+	public static void checkHoldbackQueue(int source, int id) {
 		Message msg = null;
 		boolean deliver = false;
 		
 		synchronized (queueLock) {
-			ArrayList<Message> msgs = holdBackQueue.get(source);
+			ArrayList<Message> msgs = holdBackQueue.get(1);
 			if (msgs.size() == 0)
 				return;
 			for (int i = 0; i < msgs.size(); i++) {
 				msg = msgs.get(i);
-//				System.out.println("Queue: v_time = " + v_time + "; msgTime = " + msg.getTimestamp());
+				int v_time = v_timestamps.get(0);
 				// Deliver this message
-				if (m.getTime() == mesgDelivered) {
+				if (msg.getTimestamp() == v_time + 1) {
 					deliver = true;
 					msgs.remove(i);
 					break;
@@ -480,7 +468,7 @@ public class TotalProcess {
 		}
 		
 		if (deliver) {
-			deliverMessage(msg, source, msg.getMetaData().getSocket());
+			deliverMessage(msg, source, msg.getMetaData().getSocket(), id);
 		}
 		
 	}

@@ -1,5 +1,3 @@
-
-
 public class Message implements java.io.Serializable {
 	private int timestamp;
 	private String message;

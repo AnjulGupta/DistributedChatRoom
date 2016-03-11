@@ -1,6 +1,3 @@
-
-import java.util.ArrayList;
-
 public class TotalMessage implements java.io.Serializable {
 	private String message;
 	private int source;
@@ -16,6 +13,10 @@ public class TotalMessage implements java.io.Serializable {
 	
 	public int getId() {
 		return this.id;
+	}
+	
+	public void setId(int num) {
+		this.id = num;
 	}
 	
 	public String getMessage() {

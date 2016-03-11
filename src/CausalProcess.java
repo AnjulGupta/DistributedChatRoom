@@ -1,10 +1,7 @@
-
-
 import java.net.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
-
 
 /**
  * @author Samir Chaudhry
@@ -149,19 +146,17 @@ public class CausalProcess {
 		            @Override
 		            public void run() {
 						if (checkUnicastInput(message)) {
-							// send 2 Hey
 							int destination = Integer.parseInt(message.substring(5, 6));
 							ArrayList<Integer> time = v_timestamps;
 							CausalMessage m = new CausalMessage(message.substring(7), time, clientId, list.get(destination));
 							sendMessage(m);
 						}
 						else if (checkMulticastInput(message)) {
-							// msend Hey
 							String msg = message.substring(6);
 							multicast(msg, clientId);
 						}
 						else if (!message.isEmpty()) {
-							System.err.println("send <#> <message>");
+							System.err.println("msend <message>");
 						}
 		            }
 		        }).start();
@@ -184,8 +179,8 @@ public class CausalProcess {
 		synchronized (queueLock) {
 			int time = v_timestamps.get(id-1)+1;
 			v_timestamps.set(id-1, time);
-			System.out.println("Printing new timestamp");
-			printVectorTimes(v_timestamps);
+//			System.out.println("Printing new timestamp");
+//			printVectorTimes(v_timestamps);
 			
 			return v_timestamps;
 		}
@@ -212,8 +207,6 @@ public class CausalProcess {
 			MetaData data = list.get(destination);
 			
 			if (!data.isOpen()) {
-//				System.out.println("Data is not open for " + destination);
-//				System.out.println("Creating socket to " + destinationInfo[1] + ", " + destinationInfo[2]);
 				Socket s = new Socket(destinationInfo[1], Integer.parseInt(destinationInfo[2]));
 				data.setSocket(s);
 				data.setWriter(new ObjectOutputStream(data.getSocket().getOutputStream()));
@@ -222,7 +215,6 @@ public class CausalProcess {
 			
 			if (data.getWriter() == null) {
 				System.out.println("Data writer is null");
-//				data.setWriter(new ObjectOutputStream(data.getSocket().getOutputStream()));
 			}
 			
 			data.getWriter().reset();
@@ -368,7 +360,7 @@ public class CausalProcess {
 		sleepRandomTime();
 		
 		// FOR TESTING CAUSAL
-		/* 
+		/*
 		try {
 			int destination = Integer.parseInt(m.getMetaData().getProcessInfo()[0]);
 			if (source == 1 && destination == 3) {
@@ -388,7 +380,8 @@ public class CausalProcess {
 		}
 		*/
 		
-		System.out.println("Recieved message: " + m.getMessage());
+		
+//		System.out.println("Recieved message: " + m.getMessage());
 		
 		return checkTimeStamps(m, source);
 	}
@@ -416,7 +409,6 @@ public class CausalProcess {
 			int greater = 0;
 			int less = 0;
 			if (mesgTime == (v_time + 1)) {
-//				System.out.println("Checking rest of vector");
 				for (int i = 0; i < mesgTimes.size(); i++) {
 					if (i != source - 1) { 
 						if (v_timestamps.get(i) < mesgTimes.get(i))
@@ -426,7 +418,7 @@ public class CausalProcess {
 					}
 				}
 				if (greater >= 1 && less >= 1) {
-					System.err.println("Concurrent");
+//					System.err.println("Concurrent");
 					return true;
 				}
 				else if (greater == 0) {
@@ -434,7 +426,7 @@ public class CausalProcess {
 				}
 			}
 			
-//			System.out.println("Adding to queue at " + source);
+			System.out.println("Adding to queue at " + source);
 			
 			holdBackQueue.get(source).add(m);
 			return false;
@@ -475,7 +467,7 @@ public class CausalProcess {
 					for (int j = 0; j < msgs.size(); j++) {
 						msg = msgs.get(j);
 						int v_time = v_timestamps.get(msg.getSource() - 1);
-		//				System.out.println("Queue: v_time = " + v_time + "; msgTime = " + msg.getTimestamp());
+						System.out.println("Queue: v_time = " + v_time + "; msgTime = " + msg.getTimestamp());
 						
 						// Deliver this message
 						if (msg.getTimestamp().get(i) == (v_time + 1) && checkTimeStamps(msg, msg.getSource())) {

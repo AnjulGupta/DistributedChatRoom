@@ -160,7 +160,7 @@ public class FIFOProcess {
 							multicast(msg, clientId);
 						}
 						else if (!message.isEmpty()) {
-							System.err.println("send <#> <message>");
+							System.err.println("msend <message>");
 						}
 		            }
 		        }).start();
@@ -382,7 +382,7 @@ public class FIFOProcess {
 		// Else add it to the queue
 		else if (mesgTime > (v_time + 1)){
 			synchronized (queueLock) {
-				System.out.println("Adding " + m.getMessage() + " to queue w/ timestamp " + mesgTime);
+//				System.out.println("Adding " + m.getMessage() + " to queue w/ timestamp " + mesgTime);
 				holdBackQueue.get(m.getSource()).add(m);
 			}
 		}
