@@ -4,10 +4,10 @@ DistributedChatRoom
 Implemented a distributed chat room system that reads the different processes' info from a config.txt file. Includes different types of ordering for the messages such as FIFO (first-in first-out), causal ordering, and total ordering.
 
 In order to execute the program, cd into the bin directory. Start the program in different terminals to simulate different processes:
-	* For basic unicast and multicast: java BasicProcess <process #> –– (java BasicProcess #)
-	* For FIFO ordering: java FIFOProcess <process #> –– (java FIFOProcess #)
-	* For causal ordering: java CausalProcess <process #> –– (java CausalProcess #)
-	* For total ordering: javaTotalProcess <process #> –– (java TotalProcess #)
+* For basic unicast and multicast: java BasicProcess <process #> –– (java BasicProcess #)
+* For FIFO ordering: java FIFOProcess <process #> –– (java FIFOProcess #)
+* For causal ordering: java CausalProcess <process #> –– (java CausalProcess #)
+* For total ordering: javaTotalProcess <process #> –– (java TotalProcess #)
 
 
 In order to implement ordering, I included a couple of global variables for each process. Each process has a HashMap mapping every process ID to the MetaData associated with that process. The MetaData of a process includes process info such as a process's ID, IP, and port, the socket between the current process and that process, an ObjectOutputStream from that socket that allows the current process to communicate with that process, and a boolean open to indicate whether any messages have ever been sent to that process. In addition, every process has a hold back queue. Each type of ordering has a different Message type associated with it (Message, CausalMessage, TotalMessage). Although CausalMessage and TotalMessage should extended from Message, I did not have enough time to change it before submitting.
